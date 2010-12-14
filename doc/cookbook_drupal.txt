@@ -1,0 +1,201 @@
+== link:index.html[Index] -> link:cookbook.html[Cookbook]
+///////////////////////////////////////////////////////////////////
+Last checked:
+* Cherokee: 0.99.25
+* Drupal 6.14
+///////////////////////////////////////////////////////////////////
+
+Cookbook: Setting up Drupal
+---------------------------
+
+Setting up link:http://drupal.org/[Drupal] with Cherokee is really
+easy. This recipe describes the Drupal 6.x installation, which is the
+latest release at the time of writing.
+
+There are two ways of installing Drupal: it can either be installed as
+a new virtual server or be installed inside a directory of some of the
+virtual servers that already exist.
+
+[[cherokee_vserver]]
+Setting up Drupal as a new Virtual Server
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The first step would be to go to the virtual server list page. Once in
+there, click on the `Add` button at the top of the panel to show the
+list of available wizards.
+
+image::media/images/admin_vservers_wizard.png[Virtual Server Wizards]
+
+Now, you will have to select the `CMS` category, and run the Drupal
+wizard.  At this stage the Drupal wizard will ask you for some basic
+parameters about the installation. It will try to auto-fill as many
+entries of the form as possible.  For instance, if it finds Drupal
+installed in a standard location it will use that path as the default
+directory.
+
+The new virtual server will be created after this form is submitted.
+The virtual server configuration will cover the vast majority of the
+cases. Most probably it will cover your needs, although you are free
+to modify it as you will.
+
+[[cherokee_dir]]
+Setting up Drupal inside a Directory
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Drupal can also be configured inside a directory. Let's suppose we
+want to set up Drupal inside the `/blog` directory of one of our
+virtual servers.
+
+In this case, the first thing you will have to do is to enter the
+virtual server configuration you'd like to configure Drupal in. Visit
+the `Behavior` tab, use the `Rule Management` button and click on the
+`Add` button at the top of the panel.
+
+image::media/images/admin_vserver_wizard.png[Virtual Server Wizards]
+
+As in the previous case, this wizard will ask some very basic
+information, including the public web directory where Drupal will be
+set up and the local Drupal source directory.
+
+[[drupal]]
+Setting up Drupal
+~~~~~~~~~~~~~~~~~
+
+First download and uncompress the distributed Drupal release into
+`/var/www/drupal`, and create a database suitable for the installation.
+
+Log in to MySQL:
+
+----------------
+mysql -u root -p
+----------------
+
+And create the database for Drupal. We will be using the name
+'drupal', the user 'drupaluser' and the password 'drupalpassword', but
+you should set up your own.
+
+------------------------------------------------------------------------
+CREATE DATABASE drupal;
+GRANT ALL PRIVILEGES ON drupal.* TO drupaluser@localhost IDENTIFIED BY 'drupalpassword';
+GRANT ALL PRIVILEGES ON drupal.* TO drupaluser@localhost.localdomain IDENTIFIED BY 'drupalpassword';
+FLUSH PRIVILEGES;
+quit;
+------------------------------------------------------------------------
+
+Then point your web browser to `http://localhost` and follow the
+instructions provided by the installer.
+
+You will need to copy the config file and change the permissions manually to proceed:
+
+----
+cd /var/www/drupal/sites/default
+cp default.settings.php settings.php
+chmod 644 settings.php
+----
+
+And the installation will be almost automatic. Just fill up the
+requested values and you will obtain the following results once your
+are through.
+
+image::media/images/cookbook_drupal.png[Drupal in action!]
+
+[NOTE]
+As of Drupal 6.14, a problem has been reported related to gzip
+compression of multilingual contents. Since the Wizard is meant to
+work out of the box, Cherokee disables gzip compression for the rule
+that manages PHP in your Drupal `Virtual Server`. If you are not using
+a multilingual Drupal or find another workaround for the issue, you
+will probably want to enable gzip encoding on the PHP rule to increase
+performance.
+
+/////////////////////////////
+#Config snippet from ericdrex
+
+
+vserver!60!directory_index = index.php,index.html
+vserver!60!document_root = /var/www/drupal
+vserver!60!domain!1 = my.drupal.site.com
+vserver!60!error_handler = error_redir
+vserver!60!error_handler!404 = /index.php
+vserver!60!keepalive = 1
+vserver!60!logger = combined
+vserver!60!logger!access!buffsize = 16384
+vserver!60!logger!access!filename = /var/log/cherokee/drupal.access
+vserver!60!logger!access!type = file
+vserver!60!logger!error!filename = /var/log/cherokee/drupal.error
+vserver!60!logger!error!type = file
+vserver!60!nick = drupal
+
+# works around a bug in file exists rule below by catching request for the root.
+vserver!60!rule!600!encoder!deflate = 0
+vserver!60!rule!600!encoder!gzip = 0
+vserver!60!rule!600!handler = redir
+vserver!60!rule!600!handler!rewrite!1!show = 0
+vserver!60!rule!600!handler!rewrite!1!substring = /index.php
+vserver!60!rule!600!match = request
+vserver!60!rule!600!match!final = 1
+vserver!60!rule!600!match!request = ^/$
+vserver!60!rule!600!only_secure = 0
+
+# php
+vserver!60!rule!500!encoder!deflate = 1
+vserver!60!rule!500!encoder!gzip = 1
+vserver!60!rule!500!handler = fcgi
+vserver!60!rule!500!handler!balancer = round_robin
+vserver!60!rule!500!handler!balancer!source!1 = 1
+vserver!60!rule!500!handler!check_file = 1
+vserver!60!rule!500!handler!error_handler = 1
+vserver!60!rule!500!handler!pass_req_headers = 1
+vserver!60!rule!500!handler!xsendfile = 1
+vserver!60!rule!500!match = extensions
+vserver!60!rule!500!match!extensions = php
+vserver!60!rule!500!match!final = 1
+vserver!60!rule!500!only_secure = 0
+
+# block bad paths, including with ?something appended (tricky!)
+vserver!60!rule!400!encoder!deflate = 1
+vserver!60!rule!400!encoder!gzip = 1
+vserver!60!rule!400!handler = custom_error
+vserver!60!rule!400!handler!error = 403
+vserver!60!rule!400!match = request
+vserver!60!rule!400!match!directory = /
+vserver!60!rule!400!match!extensions = module,inc
+vserver!60!rule!400!match!final = 1
+vserver!60!rule!400!match!request = \.(engine|inc|info|install|module|profile|po|sh|.*sql|theme|tpl(\.php)?|xtmpl)(\?.*)?$|^(code-style\.pl|Entries.*|Repository|Root|Tag|Template)$
+vserver!60!rule!400!only_secure = 0
+
+# clean urls rewrite for request with ?post=params
+vserver!60!rule!300!encoder!deflate = 1
+vserver!60!rule!300!encoder!gzip = 1
+vserver!60!rule!300!expiration = time
+vserver!60!rule!300!expiration!time = 1w
+vserver!60!rule!300!handler = file
+vserver!60!rule!300!handler!iocache = 1
+vserver!60!rule!300!match = exists
+vserver!60!rule!300!match!exists = a
+vserver!60!rule!300!match!final = 1
+vserver!60!rule!300!match!iocache = 1
+vserver!60!rule!300!match!match_any = 1
+vserver!60!rule!300!only_secure = 0
+vserver!60!rule!200!encoder!deflate = 0
+vserver!60!rule!200!encoder!gzip = 0
+vserver!60!rule!200!handler = redir
+vserver!60!rule!200!handler!rewrite!1!show = 0
+vserver!60!rule!200!handler!rewrite!1!substring = /index.php?q=$1&$2
+vserver!60!rule!200!match = request
+vserver!60!rule!200!match!final = 1
+vserver!60!rule!200!match!request = ^/(.*)\?(.*)$
+vserver!60!rule!200!only_secure = 0
+
+# same for requests with no POST params
+vserver!60!rule!100!encoder!deflate = 0
+vserver!60!rule!100!encoder!gzip = 0
+vserver!60!rule!100!handler = redir
+vserver!60!rule!100!handler!rewrite!1!regex = ^(.*)$
+vserver!60!rule!100!handler!rewrite!1!show = 0
+vserver!60!rule!100!handler!rewrite!1!substring = /index.php?q=$1
+vserver!60!rule!100!match = default
+vserver!60!rule!100!match!final = 1
+vserver!60!rule!100!only_secure = 0
+
+/////////////////////////////

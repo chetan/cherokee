@@ -1,0 +1,258 @@
+#!/usr/bin/env python
+
+# -*- coding: utf-8; mode: python -*-
+#
+# Cherokee-admin
+#
+# Authors:
+#      Alvaro Lopez Ortega <alvaro@alobbs.com>
+#
+# Copyright (C) 2001-2010 Alvaro Lopez Ortega
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of version 2 of the GNU General Public
+# License as published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301, USA.
+#
+
+import re
+import os
+import sys
+import time
+import fcntl
+import urllib2
+import threading
+
+from subprocess import *
+from select import select
+
+
+# Constants
+ADMIN_HOST           = "localhost"
+ADMIN_PORT           = 9090
+ADMIN_LAUNCH_TIMEOUT = 15
+
+# Paths
+cherokee_admin_path = 'cherokee-admin'
+
+
+def set_non_blocking (fd):
+    fl = fcntl.fcntl (fd, fcntl.F_GETFL)
+    fcntl.fcntl (fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+class Admin_Runner (threading.Thread):
+   def __init__ (self):
+      threading.Thread.__init__ (self)
+      self.url      = ''
+      self.user     = ''
+      self.password = ''
+      self.command  = [cherokee_admin_path] + sys.argv[1:]
+
+      self.launching      = True
+      self.launching_lock = threading.Lock()
+      self.launching_lock.acquire()
+
+      # Detect -u, --unsecure, -<something>u
+      self.needs_auth = not ('--unsecure' in sys.argv)
+
+      for arg in sys.argv:
+          if len(arg) >= 2 and arg[0] == '-' and arg[1] != '-':
+              if 'u' in arg:
+                  self.needs_auth = False
+
+   def run (self):
+      environ = os.environ.copy()
+
+      p = Popen (self.command, stdout=PIPE, stderr=PIPE, env=environ, close_fds=True)
+
+      stdout_f,  stderr_f  = (p.stdout, p.stderr)
+      stdout_fd, stderr_fd = stdout_f.fileno(), stderr_f.fileno()
+      stdout,    stderr    = '', ''
+
+      set_non_blocking (stdout_fd)
+      set_non_blocking (stderr_fd)
+
+      while True:
+         r,w,e = select([stdout_fd, stderr_fd], [], [stdout_fd, stderr_fd], 1)
+
+         if e:
+            return 0
+
+         # Read output
+         new_line = False
+
+         if stdout_fd in r:
+            data = stdout_f.read(1024)
+            if not data: break
+            if '\n' in data:
+               new_line = True
+            os.write (sys.stdout.fileno(), data)
+            stdout += data
+
+         if stderr_fd in r:
+            data = stderr_f.read(1024)
+            if not data: break
+            if '\n' in data:
+               new_line = True
+            os.write (sys.stderr.fileno(), data)
+            stderr += data
+
+         # Read the connection info
+         finished = bool(self.url)
+         if self.needs_auth:
+            finished &= bool(self.user) and bool(self.password)
+
+         if finished:
+            if self.launching:
+               self.launching = False
+               self.launching_lock.release()
+
+            stdout = stderr = ''
+            continue
+
+         # Parse connection info
+         if new_line:
+            tmp = re.findall (r'\s+URL:\s+(http.+)\n', stdout)
+            if tmp:
+               self.url = tmp[0]
+
+            tmp = re.findall (r'\s+User:\s+(\w+)', stdout)
+            if tmp:
+               self.user = tmp[0]
+
+            tmp = re.findall (r'\s+One-time Password:\s+(\w+)', stdout)
+            if tmp:
+               self.password = tmp[0]
+
+
+def http_GET_admin (host=ADMIN_HOST, port=ADMIN_PORT, req='/'):
+    URI = "http://%s:%s%s" %(host, port, req)
+    try:
+        resp = urllib2.urlopen (URI)
+    except urllib2.URLError, e:
+        description = str(e)
+        for key in ('61,', '111,', 'connection refused'):
+            if key in description.lower():
+                return False
+        return description
+    except Exception, e:
+        return str(e)
+
+    content = resp.read()
+    return content
+
+
+def bin_in_path (bin):
+   for e in os.getenv('PATH','').split(':'):
+      fp = os.path.join (e, bin)
+      if os.access (fp, os.X_OK):
+         return True
+   return False
+
+
+def launch_browser (url, user, password):
+   if user and password:
+      host = re.findall (r'http://(.+)/', url)[0]
+      URI = 'http://%(user)s:%(password)s@%(host)s/' %(locals())
+   else:
+      URI = url
+
+   # MacOS X
+   if os.access ("/usr/bin/open", os.X_OK):
+      os.system ("open '%(URI)s'" %(locals()))
+   # LSB
+   elif bin_in_path ('xdg-open'):
+      os.system ("xdg-open '%(URI)s'" %(locals()))
+   # KDE
+   elif bin_in_path ('kfmclient'):
+      os.system ("kfmclient openURL '%(URI)s'" %(locals()))
+   # Gnome
+   elif bin_in_path ('gnome-open'):
+      os.system ("gnome-open '%(URI)s'" %(locals()))
+
+   # Error
+   else:
+       print >> sys.stderr, "Did not find a way to open: %(url)s" %(locals())
+
+
+def find_cherokee_admin():
+   global cherokee_admin_path
+
+   path = os.path.abspath (os.path.realpath (__file__) + '/../cherokee-admin')
+   if os.path.exists (path):
+      cherokee_admin_path = path
+      return
+
+   path = os.path.abspath (os.path.realpath (__file__) + '/../../sbin/cherokee-admin')
+   if os.path.exists (path):
+      cherokee_admin_path = path
+      return
+
+   print "WARNING: Could not find cherokee-admin"
+
+
+def main():
+   # Find cherokee-admin
+   find_cherokee_admin()
+
+   # Ensure port is empty
+   print "Checking TCP port %(ADMIN_PORT)s availability.."%(globals()),
+   response = http_GET_admin()
+   if not response:
+       print "OK"
+   else:
+       print "\nERROR: The 9090 port is already in use.\n"
+       raise SystemExit
+
+   # Launch Cherokee-admin
+   runner = Admin_Runner()
+   runner.start()
+
+   print "Launching %s.." %(' '.join (runner.command))
+   runner.launching_lock.acquire()
+
+   # Wait for it to be available
+   print "Connecting..",
+   wait_timeout = time.time() + ADMIN_LAUNCH_TIMEOUT
+
+   while True:
+       response = http_GET_admin()
+       if response:
+           print "OK"
+           break
+       if time.time() < wait_timeout:
+           time.sleep(0.3)
+       else:
+           print "Timeout"
+           return
+
+   # Launching browser
+   print "Launching browser..",
+   launch_browser (runner.url, runner.user, runner.password)
+   print "OK"
+
+   # Wait for it to finish
+   runner.join()
+
+
+if __name__ == '__main__':
+   if '--help' in sys.argv:
+      os.system ('%(cherokee_admin_path)s --help' %(globals()))
+      raise SystemExit
+
+   try:
+      main()
+   except KeyboardInterrupt:
+      print
+      print "Exiting.."
+      sys.stdout.flush()
+      raise SystemExit

@@ -1,0 +1,39 @@
+== link:index.html[Index] -> link:modules.html[Modules] -> link:modules_handlers.html[Handlers]
+
+Handler: HTTP Error
+-------------------
+
+The **HTTP Error** (``custom_error`` internally) handler is used to
+generate errors when certain rules are matched. For instance it can be
+used to deny access to specific files, such as those containing
+passwords.
+
+[[parameters]]
+Parameters
+~~~~~~~~~~
+[options="header"]
+|============================================
+|Parameters |Type    |Description
+|`error`    |number  |HTTP error code return.
+|============================================
+
+image::media/images/admin_handler_custom_error.png[Handler Custom Error]
+
+.Available errors in `cherokee-admin`
+[cols="10%,90%",options="header"]
+|=====================================
+|Code |Description
+|400  |Bad Request
+|403  |Forbidden
+|404  |Not Found
+|405  |Method Not Allowed
+|413  |Request Entity too large
+|414  |Request-URI too long
+|416  |Requested range not satisfiable
+|500  |Internal Server Error
+|501  |Not Implemented
+|502  |Bad gateway
+|503  |Service Unavailable
+|504  |Gateway Timeout
+|505  |HTTP Version Not Supported
+|=====================================
